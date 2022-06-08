@@ -6,7 +6,7 @@ import tempfile
 import textwrap
 import signal
 
-from os.path import basename, join
+from os.path import basename, join, getsize
 
 import math
 import numpy
@@ -105,6 +105,8 @@ class CoffeaWQTask(Task):
         self.infile_args = join(tmpdir, "args_{}.p".format(self.itemid))
         self.outfile_output = join(tmpdir, "out_{}.p".format(self.itemid))
         self.outfile_stdout = join(tmpdir, "stdout_{}.p".format(self.itemid))
+        self.fin_size = None
+        self.fout_size = None
 
         self.retries = exec_defaults["retries"]
 
@@ -256,6 +258,8 @@ class CoffeaWQTask(Task):
                 (self.cmd_execution_time) / 1e6,
             )
 
+        self.fout_size = getsize(self.outfile_output)
+
         if (task_failed or output_mode) and self.std_output:
             _vprint.print("    output:")
             _vprint.print(self.std_output)
@@ -286,7 +290,7 @@ class CoffeaWQTask(Task):
 
         with open(log_filename, "a") as f:
             f.write(
-                "{id},{cat},{status},{set},{file},{start},{stop},{accum},{time_start},{time_end},{cpu},{mem}\n".format(
+                "{id},{cat},{status},{set},{file},{start},{stop},{accum},{time_start},{time_end},{cpu},{mem},{fin},{fout}\n".format(
                     id=self.id,
                     cat=self.category,
                     status=status,
@@ -299,6 +303,8 @@ class CoffeaWQTask(Task):
                     time_end=self.resources_measured.end,
                     cpu=self.resources_measured.cpu_time,
                     mem=self.resources_measured.memory,
+                    fin=self.fin_size,
+                    fout=self.fout_size,
                 )
             )
 
@@ -473,6 +479,7 @@ class AccumCoffeaWQTask(CoffeaWQTask):
 
         self.tasks_to_accumulate = tasks_to_accumulate
         self.size = sum(len(t) for t in self.tasks_to_accumulate)
+        #self.fin_size = sum(t.fout_size for t in self.tasks_to_accumulate)
 
         args = [exec_defaults["chunks_accum_in_mem"], exec_defaults["compression"]]
         args = args + [[basename(t.outfile_output) for t in self.tasks_to_accumulate]]
@@ -569,7 +576,7 @@ def work_queue_main(items, function, accumulator, **kwargs):
         if kwargs["tasks_accum_log"]:
             with open(kwargs["tasks_accum_log"], "w") as f:
                 f.write(
-                    "id,category,status,dataset,file,range_start,range_stop,accum_parent,time_start,time_end,cpu_time,memory\n"
+                    "id,category,status,dataset,file,range_start,range_stop,accum_parent,time_start,time_end,cpu_time,memory,fin,fout\n"
                 )
 
         print("Listening for work queue workers on port {}...".format(_wq_queue.port))
