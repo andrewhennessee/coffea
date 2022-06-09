@@ -258,7 +258,10 @@ class CoffeaWQTask(Task):
                 (self.cmd_execution_time) / 1e6,
             )
 
-        self.fout_size = getsize(self.outfile_output)
+        try:
+            self.fout_size = getsize(self.outfile_output)
+        except FileNotFoundError:
+            print(f'{self.outfile_output} not found')
 
         if (task_failed or output_mode) and self.std_output:
             _vprint.print("    output:")
@@ -479,7 +482,7 @@ class AccumCoffeaWQTask(CoffeaWQTask):
 
         self.tasks_to_accumulate = tasks_to_accumulate
         self.size = sum(len(t) for t in self.tasks_to_accumulate)
-        #self.fin_size = sum(t.fout_size for t in self.tasks_to_accumulate)
+        self.fin_size = sum(t.fout_size for t in self.tasks_to_accumulate)
 
         args = [exec_defaults["chunks_accum_in_mem"], exec_defaults["compression"]]
         args = args + [[basename(t.outfile_output) for t in self.tasks_to_accumulate]]
