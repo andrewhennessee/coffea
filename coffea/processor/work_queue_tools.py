@@ -105,8 +105,8 @@ class CoffeaWQTask(Task):
         self.infile_args = join(tmpdir, "args_{}.p".format(self.itemid))
         self.outfile_output = join(tmpdir, "out_{}.p".format(self.itemid))
         self.outfile_stdout = join(tmpdir, "stdout_{}.p".format(self.itemid))
-        self.fin_size = None
-        self.fout_size = None
+        self._fin_size = None
+        self._fout_size = None
 
         self.retries = exec_defaults["retries"]
 
@@ -140,6 +140,18 @@ class CoffeaWQTask(Task):
 
     def __str__(self):
         return str(self.itemid)
+
+    @property
+    def fin_size(self):
+        if self._fin_size is None:
+            self._fin_size = 0
+        return self._fin_size
+
+    @property
+    def fout_size(self):
+        if self._fout_size is None:
+            self._fout_size = getsize(self.outfile_output)
+        return self._fout_size
 
     def remote_command(self, env_file=None):
         fn_command = "python fn_wrapper function.p args.p output.p >stdout.log 2>&1"
@@ -258,11 +270,6 @@ class CoffeaWQTask(Task):
                 (self.cmd_execution_time) / 1e6,
             )
 
-        try:
-            self.fout_size = getsize(self.outfile_output)
-        except FileNotFoundError:
-            print(f'{self.outfile_output} not found')
-
         if (task_failed or output_mode) and self.std_output:
             _vprint.print("    output:")
             _vprint.print(self.std_output)
@@ -286,7 +293,7 @@ class CoffeaWQTask(Task):
         return NotImplementedError
 
     def write_task_accum_log(
-        self, log_filename, accum_parent, dataset, filename, start, stop, status
+        self, log_filename, accum_parent, dataset, filename, start, stop, fin, fout, status
     ):
         if not log_filename:
             return
@@ -306,8 +313,8 @@ class CoffeaWQTask(Task):
                     time_end=self.resources_measured.end,
                     cpu=self.resources_measured.cpu_time,
                     mem=self.resources_measured.memory,
-                    fin=self.fin_size,
-                    fout=self.fout_size,
+                    fin=fin,
+                    fout=fout,
                 )
             )
 
@@ -361,7 +368,7 @@ class PreProcCoffeaWQTask(CoffeaWQTask):
         meta = list(self.output)[0].metadata
         i = self.item
         self.write_task_accum_log(
-            log_filename, "", i.dataset, i.filename, 0, meta["numentries"], "done"
+            log_filename, "", i.dataset, i.filename, 0, meta["numentries"], self.fin_size, self.fout_size, "done"
         )
 
 
@@ -459,6 +466,8 @@ class ProcCoffeaWQTask(CoffeaWQTask):
             i.filename,
             i.entrystart,
             i.entrystop,
+            self.fin_size,
+            self.fout_size,
             status,
         )
 
@@ -482,7 +491,6 @@ class AccumCoffeaWQTask(CoffeaWQTask):
 
         self.tasks_to_accumulate = tasks_to_accumulate
         self.size = sum(len(t) for t in self.tasks_to_accumulate)
-        self.fin_size = sum(t.fout_size for t in self.tasks_to_accumulate)
 
         args = [exec_defaults["chunks_accum_in_mem"], exec_defaults["compression"]]
         args = args + [[basename(t.outfile_output) for t in self.tasks_to_accumulate]]
@@ -495,6 +503,12 @@ class AccumCoffeaWQTask(CoffeaWQTask):
 
         for t in self.tasks_to_accumulate:
             self.specify_input_file(t.outfile_output, cache=False)
+
+    @property
+    def fin_size(self):
+        if self._fin_size is None:
+            self._fin_size = sum(t.fout_size for t in self.tasks_to_accumulate)
+        return self._fin_size
 
     def cleanup_inputs(self):
         super().cleanup_inputs()
@@ -530,7 +544,7 @@ class AccumCoffeaWQTask(CoffeaWQTask):
 
     def task_accum_log(self, log_filename, status, accum_parent=None):
         self.write_task_accum_log(
-            log_filename, accum_parent, "", "", 0, len(self), status
+            log_filename, accum_parent, "", "", 0, len(self), self.fin_size, self.fout_size, status
         )
 
 
@@ -753,6 +767,7 @@ def _work_queue_processing(
         t.task_accum_log(
             exec_defaults["tasks_accum_log"], status="accumulated", accum_parent=0
         )
+        t.cleanup_outputs()
 
     if exec_defaults["dynamic_chunksize"]:
         _vprint(
@@ -796,8 +811,6 @@ def _final_accumulation(accumulator, tasks_to_accumulate, compression):
     accumulator = accumulate_result_files(
         2, compression, [t.outfile_output for t in tasks_to_accumulate], accumulator
     )
-    for t in tasks_to_accumulate:
-        t.cleanup_outputs()
 
     return accumulator
 
@@ -829,9 +842,9 @@ def _work_queue_preprocessing(
             if success:
                 accumulator = accumulate([task.output], accumulator)
                 preprocessing_bar.update(1)
+                task.task_accum_log(exec_defaults["tasks_accum_log"], "", "done")
                 task.cleanup_inputs()
                 task.cleanup_outputs()
-                task.task_accum_log(exec_defaults["tasks_accum_log"], "", "done")
             else:
                 task.resubmit(tmpdir, exec_defaults)
 
