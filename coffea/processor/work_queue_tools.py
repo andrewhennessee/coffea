@@ -430,7 +430,37 @@ class ProcCoffeaWQTask(CoffeaWQTask):
             fn_wrapper, infile_function, [item], itemid, tmpdir, exec_defaults
         )
 
-        self.specify_category("processing")
+        self.specify_category(f"processing_{item.dataset}")
+
+        default_resources = {}
+        if exec_defaults["cores"]:
+            default_resources["cores"] = exec_defaults["cores"]
+        if exec_defaults["memory"]:
+            default_resources["memory"] = exec_defaults["memory"]
+        if exec_defaults["disk"]:
+            default_resources["disk"] = exec_defaults["disk"]
+        if exec_defaults["gpus"]:
+            default_resources["gpus"] = exec_defaults["gpus"]
+
+        _wq_queue.specify_category_max_resources(self.category, default_resources)
+
+        if exec_defaults["resources_mode"] != "fixed":
+            _wq_queue.specify_category_mode(self.category, wq.WORK_QUEUE_ALLOCATION_MODE_MAX)
+
+            if (
+                exec_defaults["resources_mode"] == "max-throughput"
+            ):
+                _wq_queue.specify_category_mode(
+                    self.category, wq.WORK_QUEUE_ALLOCATION_MODE_MAX_THROUGHPUT
+                )
+
+        if (
+            exec_defaults["fast_terminate_workers"]
+            and exec_defaults["fast_terminate_workers"] > 1
+        ):
+            _wq_queue.activate_fast_abort_category(
+                self.category, exec_defaults["fast_terminate_workers"]
+            )
 
         if re.search("://", item.filename) or os.path.isabs(item.filename):
             # This looks like an URL or an absolute path (assuming shared
@@ -736,7 +766,8 @@ def _work_queue_processing(
             else:
                 tasks_to_accumulate.append(task)
 
-                if task.category == "processing":
+                if isinstance(task, ProcCoffeaWQTask):
+                #if task.category == f"processing_{task.item.dataset}":
                     items_done += len(task)
                     progress_bars["process"].update(len(task))
 
@@ -812,7 +843,7 @@ def _handle_early_terminate(signum, frame):
             "********************************************************************************"
         )
         early_terminate = True
-        _wq_queue.cancel_by_category("processing")
+        _wq_queue.cancel_by_category(f"processing_{item.dataset}")
 
 
 def _final_accumulation(accumulator, tasks_to_accumulate, compression):
